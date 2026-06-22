@@ -4,7 +4,18 @@
       "name": "Sites",
       "url": "https://sites.minchan.app",
       "description": "내가 만든 사이트 모음",
-      "tags": ["meta"],
+      "tags": [
+        "meta"
+      ],
+      "added": "2026-06-22"
+    },
+    {
+      "name": "Online Fan",
+      "url": "https://fan.minchan.app/",
+      "description": "온라인 선풍기! 아마도 바람 나올껄요?",
+      "tags": [
+        "tooljoke"
+      ],
       "added": "2026-06-22"
     }
   ]
