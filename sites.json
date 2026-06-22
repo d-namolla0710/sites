@@ -18,6 +18,17 @@
         "joke"
       ],
       "added": "2026-06-22"
+    },
+    {
+      "name": "US Camp Schedules",
+      "url": "https://uscamp.minchan.app/",
+      "description": "캠프 미국 교육과정 일정",
+      "tags": [
+        "tool",
+        "schedules",
+        "me"
+      ],
+      "added": "2026-06-22"
     }
   ]
 }
