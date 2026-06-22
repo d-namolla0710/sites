@@ -1,0 +1,11 @@
+{
+  "sites": [
+    {
+      "name": "Sites",
+      "url": "https://sites.minchan.app",
+      "description": "내가 만든 사이트 모음",
+      "tags": ["meta"],
+      "added": "2026-06-22"
+    }
+  ]
+}
