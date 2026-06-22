@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""sites.json 관리 + GitHub 자동 배포 CLI 툴
-
-URL 규칙:
-  abc          → https://abc.minchan.app/
-  abc.com      → https://abc.com/
-  https://...  → 그대로 (trailing slash만 정리)
-"""
 import json
-import argparse
 import subprocess
+import tkinter as tk
+from tkinter import ttk, messagebox
 from datetime import date
 from pathlib import Path
 
@@ -16,18 +10,16 @@ SITES_JSON = Path(__file__).parent / "sites.json"
 DEFAULT_DOMAIN = "minchan.app"
 
 
-# ── URL 정규화 ────────────────────────────────────────────────────────────────
-
 def normalize_url(raw: str) -> str:
     s = raw.strip().rstrip("/")
-    if "://" in s:                          # 프로토콜 있으면 그대로
+    if not s:
+        return ""
+    if "://" in s:
         return s + "/"
-    if "." not in s:                        # 점 없으면 .minchan.app 붙임
+    if "." not in s:
         return f"https://{s}.{DEFAULT_DOMAIN}/"
-    return f"https://{s}/"                  # 점 있으면 https만 붙임
+    return f"https://{s}/"
 
-
-# ── JSON 로드/저장 ─────────────────────────────────────────────────────────────
 
 def load() -> dict:
     if SITES_JSON.exists():
@@ -42,128 +34,259 @@ def save(data: dict):
     )
 
 
-# ── GitHub 자동 배포 ──────────────────────────────────────────────────────────
-
-def git_push(message: str):
+def git_push(message: str) -> str:
     repo = SITES_JSON.parent
     try:
-        subprocess.run(["git", "add", "sites.json"], cwd=repo, check=True)
+        subprocess.run(["git", "add", "sites.json"], cwd=repo, check=True,
+                       capture_output=True)
         result = subprocess.run(
             ["git", "commit", "-m", message],
             cwd=repo, capture_output=True, text=True,
         )
-        if "nothing to commit" in result.stdout + result.stderr:
-            print("(변경사항 없음, push 생략)")
-            return
+        out = result.stdout + result.stderr
+        if "nothing to commit" in out:
+            return "변경사항 없음"
         if result.returncode != 0:
-            raise subprocess.CalledProcessError(result.returncode, "git commit", result.stderr)
-        subprocess.run(["git", "push"], cwd=repo, check=True)
-        print("GitHub 배포 완료.")
+            return f"커밋 실패: {result.stderr.strip()}"
+        subprocess.run(["git", "push"], cwd=repo, check=True, capture_output=True)
+        return "✓ GitHub 배포 완료"
+    except FileNotFoundError:
+        return "git을 찾을 수 없어요 (PATH 확인 필요)"
     except subprocess.CalledProcessError as e:
-        print(f"Git 오류: {e}")
+        return f"Git 오류: {e}"
 
 
-# ── 커맨드 ────────────────────────────────────────────────────────────────────
+# ── 색상 팔레트 ──────────────────────────────────────────────────────────────
 
-def cmd_add(args):
-    url = normalize_url(args.url)
-    data = load()
-    for s in data["sites"]:
-        if s["url"] == url:
-            print(f"이미 있어요: {s['name']} ({url})")
+BG       = "#f5f5f7"
+SURFACE  = "#ffffff"
+ACCENT   = "#4f46e5"
+DANGER   = "#ef4444"
+WARNING  = "#f59e0b"
+TEXT     = "#1d1d1f"
+MUTED    = "#6e6e73"
+BORDER   = "#e5e5ea"
+
+
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Sites Manager")
+        self.geometry("860x580")
+        self.minsize(700, 480)
+        self.configure(bg=BG)
+
+        self._selected_idx: int | None = None
+
+        style = ttk.Style(self)
+        style.theme_use("clam")
+        style.configure("Treeview",
+                        background=SURFACE, foreground=TEXT,
+                        rowheight=26, fieldbackground=SURFACE,
+                        bordercolor=BORDER, relief="flat")
+        style.configure("Treeview.Heading",
+                        background=BG, foreground=MUTED,
+                        font=("", 9, "bold"), relief="flat")
+        style.map("Treeview", background=[("selected", "#e0e7ff")],
+                  foreground=[("selected", ACCENT)])
+
+        self._build()
+        self._refresh()
+
+    # ── UI 구성 ──────────────────────────────────────────────────────────────
+
+    def _build(self):
+        # 헤더
+        hdr = tk.Frame(self, bg=BG)
+        hdr.pack(fill=tk.X, padx=20, pady=(18, 4))
+        tk.Label(hdr, text="Sites Manager", bg=BG, fg=TEXT,
+                 font=("", 16, "bold")).pack(side=tk.LEFT)
+        self._status = tk.StringVar()
+        tk.Label(hdr, textvariable=self._status, bg=BG, fg=MUTED,
+                 font=("", 10)).pack(side=tk.RIGHT, padx=4)
+
+        # 구분선
+        tk.Frame(self, bg=BORDER, height=1).pack(fill=tk.X)
+
+        # 목록
+        list_frame = tk.Frame(self, bg=BG)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=12)
+
+        cols = ("name", "url", "tags", "added")
+        headers = {"name": ("이름", 170), "url": ("URL", 300),
+                   "tags": ("태그", 150), "added": ("추가일", 90)}
+
+        self.tree = ttk.Treeview(list_frame, columns=cols, show="headings",
+                                 selectmode="browse")
+        for c, (label, w) in headers.items():
+            self.tree.heading(c, text=label)
+            self.tree.column(c, width=w, minwidth=60)
+
+        sb = ttk.Scrollbar(list_frame, orient=tk.VERTICAL,
+                            command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(fill=tk.BOTH, expand=True)
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+
+        # 구분선
+        tk.Frame(self, bg=BORDER, height=1).pack(fill=tk.X)
+
+        # 폼
+        form = tk.Frame(self, bg=SURFACE, pady=14)
+        form.pack(fill=tk.X)
+
+        self._entries: dict[str, tk.Entry] = {}
+        fields = [("이름 *", "name"), ("URL *", "url"),
+                  ("설명", "description"), ("태그 (공백 구분)", "tags")]
+
+        for i, (label, key) in enumerate(fields):
+            row = i // 2
+            col_base = (i % 2) * 3
+
+            tk.Label(form, text=label, bg=SURFACE, fg=MUTED,
+                     font=("", 9), anchor="w"
+                     ).grid(row=row * 2, column=col_base, columnspan=2,
+                            padx=(20 if col_base == 0 else 12, 4),
+                            pady=(6, 1), sticky="w")
+
+            e = tk.Entry(form, font=("", 10), relief="flat",
+                         bg=BG, fg=TEXT, insertbackground=TEXT)
+            e.grid(row=row * 2 + 1, column=col_base, columnspan=2,
+                   padx=(20 if col_base == 0 else 12, 4),
+                   pady=(0, 4), ipady=5, sticky="ew")
+            self._entries[key] = e
+
+        form.columnconfigure(1, weight=1)
+        form.columnconfigure(4, weight=1)
+
+        # URL 미리보기
+        self._url_preview = tk.StringVar()
+        tk.Label(form, textvariable=self._url_preview, bg=SURFACE,
+                 fg=ACCENT, font=("", 8)).grid(
+            row=3, column=3, columnspan=2, padx=(12, 20),
+            pady=(0, 4), sticky="w")
+        self._entries["url"].bind("<KeyRelease>", self._update_url_preview)
+
+        # 버튼
+        btn_row = tk.Frame(self, bg=BG)
+        btn_row.pack(fill=tk.X, padx=20, pady=12)
+
+        self._btn("새로고침", self._refresh, btn_row, bg=BG, fg=MUTED,
+                  side=tk.LEFT)
+        self._btn("삭제", self._remove, btn_row, bg=DANGER)
+        self._btn("수정", self._edit, btn_row, bg=WARNING)
+        self._btn("추가", self._add, btn_row, bg=ACCENT)
+
+    def _btn(self, text, cmd, parent, bg=ACCENT, fg="white", side=tk.RIGHT):
+        tk.Button(parent, text=text, command=cmd, bg=bg, fg=fg,
+                  font=("", 10, "bold"), relief="flat",
+                  padx=18, pady=6, cursor="hand2",
+                  activebackground=bg, activeforeground=fg
+                  ).pack(side=side, padx=(0, 6) if side == tk.RIGHT else (0, 8))
+
+    # ── 이벤트 ───────────────────────────────────────────────────────────────
+
+    def _update_url_preview(self, _=None):
+        raw = self._entries["url"].get().strip()
+        if raw:
+            self._url_preview.set(f"→ {normalize_url(raw)}")
+        else:
+            self._url_preview.set("")
+
+    def _on_select(self, _=None):
+        sel = self.tree.selection()
+        if not sel:
             return
-    data["sites"].append({
-        "name": args.name,
-        "url": url,
-        "description": args.description,
-        "tags": args.tags or [],
-        "added": str(date.today()),
-    })
-    save(data)
-    print(f"추가됨: {args.name} → {url}")
-    git_push(f"add: {args.name}")
-
-
-def cmd_edit(args):
-    url = normalize_url(args.url)
-    data = load()
-    for s in data["sites"]:
-        if s["url"] == url:
-            if args.name:        s["name"]        = args.name
-            if args.description: s["description"] = args.description
-            if args.tags is not None: s["tags"]   = args.tags
-            save(data)
-            print(f"수정됨: {s['name']} ({url})")
-            git_push(f"edit: {s['name']}")
+        idx = self.tree.index(sel[0])
+        self._selected_idx = idx
+        sites = load().get("sites", [])
+        if idx >= len(sites):
             return
-    print(f"없는 URL이에요: {url}")
+        s = sites[idx]
+        for key in ("name", "url", "description"):
+            self._entries[key].delete(0, tk.END)
+            self._entries[key].insert(0, s.get(key, ""))
+        self._entries["tags"].delete(0, tk.END)
+        self._entries["tags"].insert(0, " ".join(s.get("tags", [])))
+        self._update_url_preview()
 
+    # ── CRUD ────────────────────────────────────────────────────────────────
 
-def cmd_remove(args):
-    url = normalize_url(args.url)
-    data = load()
-    targets = [s for s in data["sites"] if s["url"] == url]
-    if not targets:
-        print(f"없는 URL이에요: {url}")
-        return
-    data["sites"] = [s for s in data["sites"] if s["url"] != url]
-    save(data)
-    print(f"삭제됨: {targets[0]['name']} ({url})")
-    git_push(f"remove: {targets[0]['name']}")
+    def _get_form(self):
+        name = self._entries["name"].get().strip()
+        url  = normalize_url(self._entries["url"].get())
+        desc = self._entries["description"].get().strip()
+        tags = self._entries["tags"].get().strip().split()
+        return name, url, desc, tags
 
+    def _add(self):
+        name, url, desc, tags = self._get_form()
+        if not name or not url:
+            messagebox.showwarning("입력 오류", "이름과 URL은 필수예요.", parent=self)
+            return
+        data = load()
+        if any(s["url"] == url for s in data["sites"]):
+            messagebox.showwarning("중복", f"이미 있는 URL이에요:\n{url}", parent=self)
+            return
+        data["sites"].append({
+            "name": name, "url": url, "description": desc,
+            "tags": tags, "added": str(date.today()),
+        })
+        save(data)
+        self._refresh()
+        self._set_status(git_push(f"add: {name}"))
 
-def cmd_list(args):
-    sites = load().get("sites", [])
-    if not sites:
-        print("아직 사이트가 없어요.")
-        return
-    for i, s in enumerate(sites, 1):
-        tags = f"  [{', '.join(s['tags'])}]" if s.get("tags") else ""
-        print(f"{i}. {s['name']}{tags}")
-        print(f"   {s['url']}")
-        if s.get("description"):
-            print(f"   {s['description']}")
+    def _edit(self):
+        if self._selected_idx is None:
+            messagebox.showwarning("선택 없음", "수정할 사이트를 목록에서 선택하세요.", parent=self)
+            return
+        name, url, desc, tags = self._get_form()
+        if not name or not url:
+            messagebox.showwarning("입력 오류", "이름과 URL은 필수예요.", parent=self)
+            return
+        data = load()
+        s = data["sites"][self._selected_idx]
+        s.update(name=name, url=url, description=desc, tags=tags)
+        save(data)
+        self._refresh()
+        self._set_status(git_push(f"edit: {name}"))
 
+    def _remove(self):
+        if self._selected_idx is None:
+            messagebox.showwarning("선택 없음", "삭제할 사이트를 목록에서 선택하세요.", parent=self)
+            return
+        data = load()
+        s = data["sites"][self._selected_idx]
+        if not messagebox.askyesno("삭제 확인", f"'{s['name']}' 을(를) 삭제할까요?",
+                                   parent=self):
+            return
+        name = s["name"]
+        data["sites"].pop(self._selected_idx)
+        save(data)
+        self._refresh()
+        self._set_status(git_push(f"remove: {name}"))
 
-# ── 진입점 ────────────────────────────────────────────────────────────────────
+    def _refresh(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for s in load().get("sites", []):
+            self.tree.insert("", tk.END, values=(
+                s.get("name", ""),
+                s.get("url", ""),
+                " ".join(s.get("tags", [])),
+                s.get("added", ""),
+            ))
+        self._selected_idx = None
+        for e in self._entries.values():
+            e.delete(0, tk.END)
+        self._url_preview.set("")
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="sites.json 관리 툴",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""예시:
-  python add_site.py add "My Game" game "브라우저 게임" --tags game web
-  python add_site.py add "Portfolio" portfolio.myname.dev "포트폴리오"
-  python add_site.py edit game --name "My New Game" --tags game
-  python add_site.py remove game
-  python add_site.py list""",
-    )
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    p = sub.add_parser("add", help="사이트 추가")
-    p.add_argument("name",        help="사이트 이름")
-    p.add_argument("url",         help="URL (abc → https://abc.minchan.app/, abc.com → https://abc.com/)")
-    p.add_argument("description", help="짧은 설명")
-    p.add_argument("--tags", nargs="*", default=[], metavar="TAG")
-    p.set_defaults(func=cmd_add)
-
-    p = sub.add_parser("edit", help="사이트 수정")
-    p.add_argument("url",          help="수정할 사이트 URL")
-    p.add_argument("--name",        help="새 이름")
-    p.add_argument("--description", help="새 설명")
-    p.add_argument("--tags", nargs="*", metavar="TAG", default=None)
-    p.set_defaults(func=cmd_edit)
-
-    p = sub.add_parser("remove", help="사이트 삭제")
-    p.add_argument("url", help="삭제할 사이트 URL")
-    p.set_defaults(func=cmd_remove)
-
-    p = sub.add_parser("list", help="전체 목록 보기")
-    p.set_defaults(func=cmd_list)
-
-    args = parser.parse_args()
-    args.func(args)
+    def _set_status(self, msg: str):
+        self._status.set(msg)
+        self.after(4000, lambda: self._status.set(""))
 
 
 if __name__ == "__main__":
-    main()
+    app = App()
+    app.mainloop()
