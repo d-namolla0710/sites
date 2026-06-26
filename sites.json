@@ -29,6 +29,16 @@
         "me"
       ],
       "added": "2026-06-22"
+    },
+    {
+      "name": "'나'",
+      "url": "https://minchan.app/",
+      "description": "자기소개 사이트",
+      "tags": [
+        "me",
+        "minchan"
+      ],
+      "added": "2026-06-26"
     }
   ]
 }
