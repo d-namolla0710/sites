@@ -39,6 +39,17 @@
         "minchan"
       ],
       "added": "2026-06-26"
+    },
+    {
+      "name": "QR Code 생성기",
+      "url": "https://qr.minchan.app/",
+      "description": "여러 유형의 QR Code를 만들고, 커스텀 디자인을 적용할 수 있는 QR 코드 생성기!",
+      "tags": [
+        "tool",
+        "custom",
+        "qr"
+      ],
+      "added": "2026-06-28"
     }
   ]
 }
